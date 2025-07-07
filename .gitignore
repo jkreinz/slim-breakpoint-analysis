@@ -1,0 +1,39 @@
+# Simulation outputs (large files)
+*/simulation_outputs*/
+*/instants_simulation_outputs*/
+*.vcf
+*.vcf.gz
+*.tbi
+*.012*
+*.log
+
+# R specific
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+.Rapp.history
+
+# System files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+*.swp
+*.swo
+
+# Large data files
+*.tar.gz
+*.zip
+results/simulation_outputs/
+data/raw/simulation_*/
+
+# But keep small example files
+!data/sample_data/
+!results/figures/

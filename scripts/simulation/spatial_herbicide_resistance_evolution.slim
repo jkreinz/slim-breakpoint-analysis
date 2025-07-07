@@ -1,0 +1,634 @@
+// Spatial model of herbicide resistance evolution
+// 6N burn-in followed by 70 generations of selection
+// With enhanced migration between treated and untreated areas
+
+initialize() {
+    // Set up spatial model
+    initializeSLiMOptions(dimensionality="xy");
+    
+    // Define constants
+    defineConstant("K", 30);                // Carrying capacity per cell
+    defineConstant("WIDTH", 10);            // Width of the spatial grid
+    defineConstant("HEIGHT", 10);           // Height of the spatial grid
+    defineConstant("LAMBDA", 2.0);          // Selection strength for herbicide
+    defineConstant("MIGRATION_RATE", 0.2);  // Migration rate between cells
+    defineConstant("INITIAL_PATCHES", 1);   // Number of initial herbicide patches
+    
+    // Calculate population size and timing
+    defineConstant("TOTAL_POP", K * WIDTH * HEIGHT);
+    defineConstant("BURN_IN", 6 * TOTAL_POP); // 6N generations for equilibrium
+    defineConstant("SELECTION_GENS", 70);     // 70 generations of selection
+    defineConstant("STABILIZATION_GENS", 5);  // Additional generations after final herbicide application
+    defineConstant("TOTAL_GENS", BURN_IN + SELECTION_GENS + STABILIZATION_GENS); // Total simulation time
+    
+    // Enhanced migration parameters
+    defineConstant("LONG_DISTANCE_PROB", 0.05);  // Probability of long-distance migration
+    defineConstant("INTERACTION_DISTANCE", 2.5); // Spatial interaction distance (in cells)
+    
+    // Genome setup
+    initializeMutationRate(1e-6);
+    
+    // Create mutation types:
+    // m1: neutral mutations
+    // m2: large-effect herbicide resistance mutations (very rare)
+    // m3: small-effect polygenic herbicide resistance mutations
+    initializeMutationType("m1", 0.5, "f", 0.0);         // neutral
+    initializeMutationType("m2", 0.5, "f", 0.2);         // large-effect resistance
+    initializeMutationType("m3", 0.5, "f", 0.001);       // small-effect resistance
+    
+    // Define genomic elements
+    initializeGenomicElementType("g1", c(m1, m2, m3), c(0.98999, 0.0005, 0.01));
+    initializeGenomicElement(g1, 0, 9999);
+    initializeRecombinationRate(1e-4);
+    
+    // Set up output file
+    defineConstant("simID", getSeed());
+    writeFile(paste(simID + "_output.csv"), "cycle,patch_type,popSize,largeEffectFreq,polygeneScore,herbCoverage");
+    
+    // Matrix to track which cells have herbicide (1 = treated, 0 = untreated)
+    defineGlobal("herbicideMap", matrix(rep(0, WIDTH * HEIGHT), nrow=WIDTH, ncol=HEIGHT));
+    
+    // Track herbicide coverage (proportion of landscape treated)
+    defineGlobal("herbCoverage", 0.0);
+    
+    // Expansion interval
+    defineConstant("EXPANSION_INTERVAL", 10);
+    
+    catn("Simulation will run for " + BURN_IN + " burn-in generations + " + 
+         SELECTION_GENS + " selection generations + " +
+         STABILIZATION_GENS + " stabilization generations");
+}
+
+1 early() {
+    // Create a single metapopulation
+    sim.addSubpop("p1", TOTAL_POP);
+    
+    // Place individuals randomly across the grid
+    for (ind in p1.individuals) {
+        x = runif(1, 0, WIDTH - 0.001);
+        y = runif(1, 0, HEIGHT - 0.001);
+        ind.setSpatialPosition(c(x, y));
+    }
+    
+    // Set up spatial bounds
+    p1.setSpatialBounds(c(0, 0, WIDTH, HEIGHT));
+    
+    catn("Initial setup complete. All " + (WIDTH * HEIGHT) + " cells are untreated");
+    catn("Burn-in period will run until generation " + BURN_IN);
+}
+
+// Initialize herbicide patches at the end of burn-in
+BURN_IN early() {
+    catn("Burn-in completed after " + BURN_IN + " generations.");
+    catn("Starting selection phase with herbicide application.");
+    
+    // Create initial patches of herbicide
+    for (i in 1:INITIAL_PATCHES) {
+        // Choose a random center for this patch
+        centerX = asInteger(runif(1, 1, WIDTH-2));
+        centerY = asInteger(runif(1, 1, HEIGHT-2));
+        
+        // Create a patch with center and neighbors
+        herbicideMap[centerX, centerY] = 1;
+        
+        // Add neighboring cells with 50% probability
+        for (dx in -1:1) {
+            for (dy in -1:1) {
+                nx = centerX + dx;
+                ny = centerY + dy;
+                
+                // Bounds checking
+                if (nx >= 0 & nx < WIDTH & ny >= 0 & ny < HEIGHT) {
+                    // 50% chance to add neighbor to patch
+                    if (runif(1) < 0.5) {
+                        herbicideMap[nx, ny] = 1;
+                    }
+                }
+            }
+        }
+        
+        catn("Created initial herbicide patch centered at (" + centerX + "," + centerY + ")");
+    }
+    
+    // Update coverage
+    herbCoverage = sum(herbicideMap) / (WIDTH * HEIGHT);
+    catn("Generation " + sim.cycle + ": Initial herbicide patches created. Coverage = " + herbCoverage);
+}
+
+// Expand herbicide coverage during selection phase - but not during stabilization
+(BURN_IN+1):(BURN_IN+SELECTION_GENS) early() {
+    // Only expand on certain cycles
+    if ((sim.cycle - BURN_IN) % EXPANSION_INTERVAL == 0) {
+        catn("Generation " + sim.cycle + " (Selection gen " + (sim.cycle - BURN_IN) + 
+             "): Expanding herbicide coverage");
+        
+        // Store the current map for reference
+        oldMap = herbicideMap;
+        
+        // Maximum cells to add per expansion
+        maxNewCells = 5;
+        
+        // First, find border cells
+        borderCells = c();
+        
+        for (x in 0:(WIDTH-1)) {
+            for (y in 0:(HEIGHT-1)) {
+                // Skip cells that already have herbicide
+                if (herbicideMap[x, y] == 1)
+                    next;
+                
+                // Check if this cell is adjacent to an herbicide cell
+                hasHerbicideNeighbor = F;
+                
+                // Check all 8 neighboring cells
+                for (dx in -1:1) {
+                    for (dy in -1:1) {
+                        // Skip self
+                        if (dx == 0 & dy == 0)
+                            next;
+                        
+                        // Check neighbor coordinates
+                        nx = x + dx;
+                        ny = y + dy;
+                        
+                        // Bounds checking
+                        if (nx < 0 | nx >= WIDTH | ny < 0 | ny >= HEIGHT)
+                            next;
+                        
+                        // Check if this neighbor has herbicide
+                        if (oldMap[nx, ny] == 1) {
+                            hasHerbicideNeighbor = T;
+                            break;
+                        }
+                    }
+                    if (hasHerbicideNeighbor)
+                        break;
+                }
+                
+                // If this cell is adjacent to an herbicide cell, add it to our list
+                if (hasHerbicideNeighbor)
+                    borderCells = c(borderCells, x, y);
+            }
+        }
+        
+        // Calculate how many border cells to add
+        borderPairs = asInteger(size(borderCells) / 2);
+        if (borderPairs > 0) {
+            // At least add 1 but no more than maxNewCells or available cells
+            expansionCells = min(max(1, asInteger(borderPairs / 2)), maxNewCells);
+            
+            // Randomly select border cells to add herbicide
+            if (borderPairs >= expansionCells) {
+                selectedIndices = sample(0:(borderPairs-1), expansionCells);
+                
+                for (idx in selectedIndices) {
+                    x = borderCells[idx * 2];
+                    y = borderCells[idx * 2 + 1];
+                    herbicideMap[x, y] = 1;
+                    catn("Added herbicide to border cell (" + x + "," + y + ")");
+                }
+            }
+        }
+        
+        // Second: occasionally start a new patch (20% chance)
+        if (runif(1) < 0.2) {
+            // Find all untreated cells
+            untreatedCells = c();
+            for (x in 0:(WIDTH-1)) {
+                for (y in 0:(HEIGHT-1)) {
+                    if (herbicideMap[x, y] == 0) {
+                        untreatedCells = c(untreatedCells, x, y);
+                    }
+                }
+            }
+            
+            // If there are untreated cells available
+            untreatedPairs = asInteger(size(untreatedCells) / 2);
+            if (untreatedPairs >= 1) {
+                // Pick a random untreated cell
+                idx = asInteger(runif(1, 0, untreatedPairs));
+                x = untreatedCells[idx * 2];
+                y = untreatedCells[idx * 2 + 1];
+                
+                // Create a new patch center
+                herbicideMap[x, y] = 1;
+                catn("Started a new herbicide patch at (" + x + "," + y + ")");
+            }
+        }
+        
+        // Update coverage
+        herbCoverage = sum(herbicideMap) / (WIDTH * HEIGHT);
+        catn("Herbicide coverage expanded to " + herbCoverage + 
+             " (" + sum(herbicideMap) + " cells out of " + (WIDTH * HEIGHT) + ")");
+    }
+}
+
+// Enhanced migration using modifyChild callback
+1:TOTAL_GENS modifyChild() {
+    // This gets called for each offspring that is generated
+    
+    // Randomly set position - either near parents or elsewhere
+    if (runif(1) < LONG_DISTANCE_PROB) {
+        // Long-distance dispersal - place anywhere on the grid
+        newPos = c(runif(1, 0, WIDTH - 0.001), runif(1, 0, HEIGHT - 0.001));
+    } else {
+        // Local dispersal - somewhere near parents with random offset
+        parentPos = parent1.spatialPosition;
+        offset = c(runif(1, -INTERACTION_DISTANCE, INTERACTION_DISTANCE), 
+                   runif(1, -INTERACTION_DISTANCE, INTERACTION_DISTANCE));
+        newPos = parentPos + offset;
+        
+        // Ensure position is within bounds
+        if (newPos[0] < 0.0)
+            newPos[0] = 0.0;
+        else if (newPos[0] >= WIDTH)
+            newPos[0] = WIDTH - 0.001;
+            
+        if (newPos[1] < 0.0)
+            newPos[1] = 0.0;
+        else if (newPos[1] >= HEIGHT)
+            newPos[1] = HEIGHT - 0.001;
+    }
+    
+    child.setSpatialPosition(newPos);
+    
+    return T;
+}
+
+// Fitness effects based on spatial location and mutations
+1:TOTAL_GENS fitnessEffect() {
+    // Get counts of resistance mutations
+    largeEffectMuts = individual.genomes.countOfMutationsOfType(m2);
+    polygenicMuts = individual.genomes.countOfMutationsOfType(m3);
+    
+    // During burn-in: only apply costs of resistance mutations, no benefits
+    if (sim.cycle < BURN_IN) {
+        // Cost is proportional to the number of resistance mutations
+        return 1.0 - (sum(largeEffectMuts) * 0.2 + sum(polygenicMuts) * 0.001);
+    }
+    
+    // After burn-in: full selection model with costs and benefits
+    // Get individual's spatial position
+    posX = individual.spatialPosition[0];
+    posY = individual.spatialPosition[1];
+    
+    // Get position in the grid (round down to integer)
+    cellX = asInteger(posX);
+    cellY = asInteger(posY);
+    
+    // Bound checking
+    cellX = max(0, min(WIDTH-1, cellX));
+    cellY = max(0, min(HEIGHT-1, cellY));
+    
+    // Check if this cell has herbicide
+    hasHerbicide = (herbicideMap[cellX, cellY] == 1);
+    
+    if (hasHerbicide) {
+        // This location has herbicide
+        // Base fitness reduced by herbicide
+        baseFitness = 1.0 - LAMBDA;
+        
+        // Large effect mutations strongly mitigate herbicide effects
+        if (sum(largeEffectMuts) > 0)
+            baseFitness = 1.0;  // Almost complete resistance with large effect mutation
+        
+        // Polygenic mutations contribute additively up to a cap
+        polygenicEffect = min(sum(polygenicMuts) * 0.01, 0.9);  // Cap at 90% effectiveness
+        
+        baseFitness = max(baseFitness + polygenicEffect, 0.1);  // Ensure minimum fitness
+        
+        return baseFitness;
+    } else {
+        // No herbicide at this location
+        // Cost for resistance mutations
+        return 1.0 - (sum(largeEffectMuts) * 0.1 + sum(polygenicMuts) * 0.001);
+    }
+}
+
+// Report stabilization phase generations
+(BURN_IN+SELECTION_GENS+1):TOTAL_GENS early() {
+    catn("Stabilization phase - generation " + (sim.cycle - BURN_IN - SELECTION_GENS) + 
+         " of " + STABILIZATION_GENS);
+}
+
+// Announce final analysis
+TOTAL_GENS early() {
+    catn("Beginning final analysis after " + BURN_IN + " burn-in generations, " + 
+         SELECTION_GENS + " selection generations, and " + 
+         STABILIZATION_GENS + " stabilization generations.");
+}
+
+// Visualization and data collection
+1:TOTAL_GENS late() {
+    // Skip most outputs during burn-in (just output every 100 generations)
+    if (sim.cycle < BURN_IN & sim.cycle % 100 != 0)
+        return;
+    
+    // Tag individuals based on their location and resistance status
+    // and create lists of individuals in each area
+    treatedInds = c();
+    untreatedInds = c();
+    
+    for (ind in p1.individuals) {
+        pos = ind.spatialPosition;
+        cellX = asInteger(pos[0]);
+        cellY = asInteger(pos[1]);
+        
+        // Bound checking
+        cellX = max(0, min(WIDTH-1, cellX));
+        cellY = max(0, min(HEIGHT-1, cellY));
+        
+        // Check if this individual is in a treated cell
+        inTreatedCell = (herbicideMap[cellX, cellY] == 1);
+        
+        // Check if this individual has large-effect resistance
+        hasLargeResistance = (sum(ind.genomes.countOfMutationsOfType(m2)) > 0);
+        
+        // Set tag value and add to appropriate list
+        if (inTreatedCell) {
+            if (hasLargeResistance)
+                ind.tag = 2;  // Resistant individual in herbicide cell
+            else
+                ind.tag = 1;  // Non-resistant individual in herbicide cell
+                
+            treatedInds = c(treatedInds, ind);
+        } else {
+            if (hasLargeResistance)
+                ind.tag = 3;  // Resistant individual in untreated cell
+            else
+                ind.tag = 0;  // Non-resistant individual in untreated cell
+                
+            untreatedInds = c(untreatedInds, ind);
+        }
+    }
+    
+    // Collect data on treated vs untreated areas
+    herbCoverage = sum(herbicideMap) / (WIDTH * HEIGHT);
+    
+    // Get cell counts
+    treatedCellCount = sum(herbicideMap);
+    untreatedCellCount = (WIDTH * HEIGHT) - treatedCellCount;
+    
+    // Count individuals in each area
+    treatedCount = size(treatedInds);
+    untreatedCount = size(untreatedInds);
+    
+    // Analyze treated area
+    if (treatedCount > 0) {
+        // Count resistance mutations
+        largeEffectCount = 0;
+        polygenicSum = 0;
+        
+        for (ind in treatedInds) {
+            // Count large effect mutations
+            if (sum(ind.genomes.countOfMutationsOfType(m2)) > 0)
+                largeEffectCount = largeEffectCount + 1;
+            
+            // Sum polygenic mutations
+            polygenicSum = polygenicSum + sum(ind.genomes.countOfMutationsOfType(m3));
+        }
+        
+        // Calculate frequencies
+        largeEffectFreq = largeEffectCount / asFloat(treatedCount);
+        avgPolygenic = polygenicSum / asFloat(treatedCount);
+        
+        // Write to file
+        line = paste(sim.cycle, "treated", treatedCount, largeEffectFreq, avgPolygenic, herbCoverage);
+        writeFile(paste(simID + "_output.csv"), line, append=T);
+        
+        // Output to console
+        selectionString = "";
+        if (sim.cycle >= BURN_IN)
+            selectionString = " (Selection gen " + (sim.cycle - BURN_IN) + ")";
+        
+        catn("Cycle " + sim.cycle + selectionString + 
+             " Treated area: popSize=" + treatedCount + 
+             ", largeEffectFreq=" + largeEffectFreq + 
+             ", avgPolygenic=" + avgPolygenic);
+    } else if (treatedCellCount > 0) {
+        line = paste(sim.cycle, "treated", 0, 0.0, 0.0, herbCoverage);
+        writeFile(paste(simID + "_output.csv"), line, append=T);
+        
+        selectionString = "";
+        if (sim.cycle >= BURN_IN)
+            selectionString = " (Selection gen " + (sim.cycle - BURN_IN) + ")";
+            
+        catn("Cycle " + sim.cycle + selectionString + 
+             " Treated area: popSize=0, largeEffectFreq=0.0, avgPolygenic=0.0");
+    }
+    
+    // Analyze untreated area
+    if (untreatedCount > 0) {
+        // Count resistance mutations
+        largeEffectCount = 0;
+        polygenicSum = 0;
+        
+        for (ind in untreatedInds) {
+            // Count large effect mutations
+            if (sum(ind.genomes.countOfMutationsOfType(m2)) > 0)
+                largeEffectCount = largeEffectCount + 1;
+            
+            // Sum polygenic mutations
+            polygenicSum = polygenicSum + sum(ind.genomes.countOfMutationsOfType(m3));
+        }
+        
+        // Calculate frequencies
+        largeEffectFreq = largeEffectCount / asFloat(untreatedCount);
+        avgPolygenic = polygenicSum / asFloat(untreatedCount);
+        
+        // Write to file
+        line = paste(sim.cycle, "untreated", untreatedCount, largeEffectFreq, avgPolygenic, herbCoverage);
+        writeFile(paste(simID + "_output.csv"), line, append=T);
+        
+        // Output to console
+        selectionString = "";
+        if (sim.cycle >= BURN_IN)
+            selectionString = " (Selection gen " + (sim.cycle - BURN_IN) + ")";
+        
+        catn("Cycle " + sim.cycle + selectionString + 
+             " Untreated area: popSize=" + untreatedCount + 
+             ", largeEffectFreq=" + largeEffectFreq + 
+             ", avgPolygenic=" + avgPolygenic);
+    } else if (untreatedCellCount > 0) {
+        line = paste(sim.cycle, "untreated", 0, 0.0, 0.0, herbCoverage);
+        writeFile(paste(simID + "_output.csv"), line, append=T);
+        
+        selectionString = "";
+        if (sim.cycle >= BURN_IN)
+            selectionString = " (Selection gen " + (sim.cycle - BURN_IN) + ")";
+            
+        catn("Cycle " + sim.cycle + selectionString + 
+             " Untreated area: popSize=0, largeEffectFreq=0.0, avgPolygenic=0.0");
+    }
+    
+    // Report on population distribution
+    if (sim.cycle % 10 == 0 | sim.cycle >= BURN_IN + SELECTION_GENS) {
+        // Calculate ideal proportions based on cell counts
+        totalCells = WIDTH * HEIGHT;
+        idealTreatedProp = treatedCellCount / asFloat(totalCells);
+        idealUntreatedProp = untreatedCellCount / asFloat(totalCells);
+        
+        // Calculate actual proportions
+        totalInds = p1.individualCount;
+        actualTreatedProp = treatedCount / asFloat(totalInds);
+        actualUntreatedProp = untreatedCount / asFloat(totalInds);
+        
+        // Log distribution
+        catn("Population distribution: " + 
+             round(100 * actualTreatedProp) + "% in treated cells (ideal " + 
+             round(100 * idealTreatedProp) + "%), " + 
+             round(100 * actualUntreatedProp) + "% in untreated cells (ideal " + 
+             round(100 * idealUntreatedProp) + "%)");
+    }
+}
+
+TOTAL_GENS late() {
+    // Final analysis with proportional population statistics
+    
+    // Update herbicide coverage one final time
+    herbCoverage = sum(herbicideMap) / (WIDTH * HEIGHT);
+    
+    // Calculate cell counts
+    treatedCellCount = sum(herbicideMap);
+    untreatedCellCount = (WIDTH * HEIGHT) - treatedCellCount;
+    
+    // End simulation and output summary
+    catn("Simulation " + simID + " completed.");
+    catn("Ran for " + BURN_IN + " burn-in generations + " + 
+         SELECTION_GENS + " selection generations + " + 
+         STABILIZATION_GENS + " stabilization generations.");
+    
+    // Debug output for final herbicide map
+    catn("Final herbicide map:");
+    for (y in (HEIGHT-1):0) {
+        row = "";
+        for (x in 0:(WIDTH-1)) {
+            row = row + herbicideMap[x, y];
+        }
+        catn(row);
+    }
+    
+    // Analyze final state by categorizing individuals by location
+    treatedInds = c();
+    untreatedInds = c();
+    
+    for (ind in p1.individuals) {
+        pos = ind.spatialPosition;
+        cellX = asInteger(pos[0]);
+        cellY = asInteger(pos[1]);
+        
+        // Bound checking
+        cellX = max(0, min(WIDTH-1, cellX));
+        cellY = max(0, min(HEIGHT-1, cellY));
+        
+        // Determine if in treated cell
+        inTreatedCell = (herbicideMap[cellX, cellY] == 1);
+        
+        // Record resistance status
+        hasLargeResistance = (sum(ind.genomes.countOfMutationsOfType(m2)) > 0);
+        
+        // Set tag and add to appropriate list
+        if (inTreatedCell) {
+            if (hasLargeResistance)
+                ind.tag = 2;  // Resistant in treated cell
+            else
+                ind.tag = 1;  // Non-resistant in treated cell
+                
+            treatedInds = c(treatedInds, ind);
+        } else {
+            if (hasLargeResistance)
+                ind.tag = 3;  // Resistant in untreated cell
+            else
+                ind.tag = 0;  // Non-resistant in untreated cell
+                
+            untreatedInds = c(untreatedInds, ind);
+        }
+    }
+    
+    // Get actual counts
+    actualTreatedCount = size(treatedInds);
+    actualUntreatedCount = size(untreatedInds);
+    
+    // Calculate ideal proportions based on cell counts
+    totalCells = WIDTH * HEIGHT;
+    idealTreatedProp = treatedCellCount / asFloat(totalCells);
+    idealUntreatedProp = untreatedCellCount / asFloat(totalCells);
+    
+    // Calculate actual proportions
+    totalInds = p1.individualCount;
+    actualTreatedProp = actualTreatedCount / asFloat(totalInds);
+    actualUntreatedProp = actualUntreatedCount / asFloat(totalInds);
+    
+    // Output stats for treated areas
+    catn("Final state in treated areas (with " + treatedCellCount + " cells, " + 
+         round(100 * idealTreatedProp) + "% of landscape):");
+    catn("  Population size: " + actualTreatedCount + " (" + 
+         round(100 * actualTreatedProp) + "% of population)");
+    
+    if (actualTreatedCount > 0) {
+        largeEffectCount = 0;
+        polygenicSum = 0;
+        
+        for (ind in treatedInds) {
+            if (sum(ind.genomes.countOfMutationsOfType(m2)) > 0)
+                largeEffectCount = largeEffectCount + 1;
+            polygenicSum = polygenicSum + sum(ind.genomes.countOfMutationsOfType(m3));
+        }
+        
+        catn("  Large effect freq: " + (largeEffectCount / asFloat(actualTreatedCount)));
+        catn("  Average polygenic: " + (polygenicSum / asFloat(actualTreatedCount)));
+    } else {
+        catn("  No individuals in treated cells");
+    }
+    
+    // Output stats for untreated areas
+    catn("Final state in untreated areas (with " + untreatedCellCount + " cells, " + 
+         round(100 * idealUntreatedProp) + "% of landscape):");
+    catn("  Population size: " + actualUntreatedCount + " (" + 
+         round(100 * actualUntreatedProp) + "% of population)");
+    
+    if (actualUntreatedCount > 0) {
+        largeEffectCount = 0;
+        polygenicSum = 0;
+        
+        for (ind in untreatedInds) {
+            if (sum(ind.genomes.countOfMutationsOfType(m2)) > 0)
+                largeEffectCount = largeEffectCount + 1;
+            polygenicSum = polygenicSum + sum(ind.genomes.countOfMutationsOfType(m3));
+        }
+        
+        catn("  Large effect freq: " + (largeEffectCount / asFloat(actualUntreatedCount)));
+        catn("  Average polygenic: " + (polygenicSum / asFloat(actualUntreatedCount)));
+    } else {
+        catn("  No individuals in untreated cells");
+    }
+    
+    // Compare population distribution to landscape distribution
+    catn("Population vs. landscape distribution:");
+    catn("  Treated cells: " + round(100 * idealTreatedProp) + "% of landscape, " + 
+         round(100 * actualTreatedProp) + "% of population");
+    catn("  Untreated cells: " + round(100 * idealUntreatedProp) + "% of landscape, " + 
+         round(100 * actualUntreatedProp) + "% of population");
+         
+    // Calculate migration balance
+    if (treatedCellCount > 0 & untreatedCellCount > 0) {
+        // Normalized population densities
+        treatedDensity = actualTreatedCount / treatedCellCount;
+        untreatedDensity = actualUntreatedCount / untreatedCellCount;
+        
+        // A value of 1.0 means perfectly balanced densities
+        densityRatio = treatedDensity / untreatedDensity;
+        
+        if (densityRatio > 1.0) {
+            catn("  Population density is " + round(densityRatio * 100) / 100 + "x higher in treated areas");
+        } else if (densityRatio < 1.0) {
+            catn("  Population density is " + round((1/densityRatio) * 100) / 100 + "x higher in untreated areas");
+        } else {
+            catn("  Population density is perfectly balanced between areas");
+        }
+    }
+    
+    // Output final herbicide coverage
+    catn("Final herbicide coverage: " + herbCoverage + 
+         " (" + sum(herbicideMap) + " cells out of " + (WIDTH * HEIGHT) + ")");
+}

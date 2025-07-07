@@ -1,0 +1,105 @@
+// SLiM script for breakpoint analysis with targeted temporal sampling around selection shifts
+initialize() {
+    initializeSLiMOptions(dimensionality="xy");
+    
+    initializeMutationRate(5e-6);
+    
+    // m1 mutation type: neutral
+    initializeMutationType("m1", 0.5, "f", 0.0);
+    
+    // m2 mutation type: beneficial - exponential distribution centred on 0.025, recessive (h=0.15)
+    initializeMutationType("m2", 0.5, "e", 0.025);
+    m2.convertToSubstitution = F;
+    initializeGenomicElementType("g1", c(m1,m2), c(1.0,0.01));
+    
+    // uniform chromosome of length 100 kb with uniform recombination
+    initializeGenomicElement(g1, 0, 99999);
+    initializeRecombinationRate(0.000023);
+    
+    // Get iteration number from command line (default to 1 if not provided)
+    if (exists("slimgui")) {
+        defineConstant("ITER", 1);
+    } else {
+        // ITER will be defined via -d flag from command line, default to 1
+        if (!exists("ITER")) {
+            defineConstant("ITER", 1);
+        }
+    }
+    
+    // Create output directory path
+   defineConstant("OUTPUT_DIR", "instants_simulation_outputs/iteration_" + ITER + "/");
+ 
+    // Define selection shift timepoints
+    defineConstant("SHIFT1", 2000);  // Neutral → Positive
+    defineConstant("SHIFT2", 2051);  // Positive → Negative  
+    defineConstant("SHIFT3", 2101);  // Negative → Positive
+}
+
+// create a population of 5000 individuals
+1 late() {
+    sim.addSubpop("p1", 5000);
+    
+    // initial positions are random in ([0,1], [0,1])
+    p1.individuals.x = runif(p1.individualCount);
+    p1.individuals.y = runif(p1.individualCount);
+}
+
+//generate spatial position for the offspring individual
+modifyChild() {
+    // draw a child position near the first parent, within bounds
+    do child.x = parent1.x + rnorm(1, 0, 0.02);
+    while ((child.x < 0.0) | (child.x > 1.0));
+    
+    do child.y = parent1.y + rnorm(1, 0, 0.02);
+    while ((child.y < 0.0) | (child.y > 1.0));
+    
+    return T;
+}
+
+// Period 1: Neutral evolution (generations 1-1999)
+1:1999 mutationEffect(m2, p1) { 
+    return 1.0; 
+}
+
+// Period 2: Positive selection (generations 2000-2050)
+2000:2050 mutationEffect(m2, p1) {
+    if (homozygous)
+        return 1.0 + mut.selectionCoeff * 2;  // positive selection centered around s = 0.05
+    else
+        return 1.0 + (mut.selectionCoeff * 2) * 0.5;  // recessive dominance (h=0.15)
+}
+
+// Period 3: Negative selection (generations 2051-2100) 
+2051:2100 mutationEffect(m2, p1) {
+    effectiveS = mut.selectionCoeff * 1.0;
+    if (homozygous)
+        return 1.0 - effectiveS;  // negative selection (target: -0.025)
+    else
+        return 1.0 - effectiveS * 0.5;  // recessive dominance for costs (h=0.15)
+}
+
+// Period 4: Positive selection again (generations 2101-2141)
+2101:2141 mutationEffect(m2, p1) {
+    effectiveS = mut.selectionCoeff * 4.0;
+    if (homozygous)
+        return 1.0 + effectiveS; // strong positive selection (target: +0.1)
+    else
+        return 1.0 + effectiveS * 0.5;  // recessive dominance (h=0.15)
+}
+
+// Targeted sampling around selection shifts
+// 25 individuals sampled 2 years before and 2 years after each shift
+
+// SHIFT 1: Neutral → Positive selection (generation 2000)
+1998 late() { p1.outputVCFSample(40, filePath=OUTPUT_DIR + "shift1_before_sample_n40_h5.vcf"); }  // 2 years before
+2002 late() { p1.outputVCFSample(40, filePath=OUTPUT_DIR + "shift1_after_sample_n40_h5.vcf"); }   // 2 years after
+
+// SHIFT 2: Positive → Negative selection (generation 2051)  
+2049 late() { p1.outputVCFSample(40, filePath=OUTPUT_DIR + "shift2_before_sample_n40_h5.vcf"); }  // 2 years before
+2053 late() { p1.outputVCFSample(40, filePath=OUTPUT_DIR + "shift2_after_sample_n40_h5.vcf"); }   // 2 years after
+
+// SHIFT 3: Negative → Positive selection (generation 2101)
+2099 late() { p1.outputVCFSample(40, filePath=OUTPUT_DIR + "shift3_before_sample_n40_h5.vcf"); }  // 2 years before  
+2103 late() { p1.outputVCFSample(40, filePath=OUTPUT_DIR + "shift3_after_sample_n40_h5.vcf"); }   // 2 years after
+
+2141 late() { p1.outputVCFSample(40, filePath=OUTPUT_DIR + "last_sample_n40_h5.vcf"); }   // 2 years after
