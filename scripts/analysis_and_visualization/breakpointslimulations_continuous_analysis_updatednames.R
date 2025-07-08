@@ -4,13 +4,15 @@ library(ggplot2)
 library(viridis)
 library(tidyr)
 library(patchwork)
+library(segmented)
+library(data.table)
 
 # Read summary results for all three simulation types
-summary_additive <- read.csv("/Users/juliakreiner/simulation_outputs/additive_n200_summary_updated.csv")
-summary_additive_n70 <- read.csv("/Users/juliakreiner/simulation_outputs/additive_n70_summary_updated.csv")
+summary_additive <- read.csv("breakpoint_continuous_additive_n200_outputs/additive_n200_summary.csv")
+summary_additive_n70 <- read.csv("breakpoint_continuous_additive_n70_outputs/additive_n70_summary.csv")
 
 # Handle recessive summary file (check if it exists and has the right name)
-recessive_file <- "/Users/juliakreiner/simulation_outputs_recessive/updated_breakpoint_summary_recessive.csv"
+recessive_file <- "breakpoint_continuous_recessive_n200_outputs/recessive_n200_summary.csv"
 
 # Read recessive data and fix column names if needed
 if (file.exists(recessive_file)) {
@@ -193,7 +195,7 @@ if(nrow(bp_data) > 0) {
 combined_summary_analysis <- p4 | p2 | p3
 combined_summary_analysis
 
-ggsave("/Users/juliakreiner/updated_summary_method_performance.png", combined_summary_analysis, 
+ggsave("continuous_summary_method_performance.png", combined_summary_analysis, 
        width = 18, height = 6, dpi = 300)
 
 # Display summary statistics
@@ -224,7 +226,8 @@ extract_sample_counts <- function(summary_data, output_dir, file_prefix, sim_typ
     # Read individual names
     inds <- read.table(paste0(output_dir, "/iteration_", iter, "/", file_prefix, iter, ".012.indv"))
     
-    # Extract year information (same logic as in your script)
+    # Extract year information - updated for new VCF naming pattern
+    # New pattern: t128_sample_h50_n200_i0, t130_sample_h50_n200_i0, etc.
     year <- gsub("i","",gsub("t","",(gsub("_sample_i0","",inds$V1))))
     year2 <- as.numeric(unlist(lapply(strsplit(year,"_"), `[[`, 1)))
     
@@ -249,7 +252,7 @@ extract_sample_counts <- function(summary_data, output_dir, file_prefix, sim_typ
 cat("Extracting sample counts for additive (n=200) simulations...\n")
 additive_sample_counts <- extract_sample_counts(
   summary_additive, 
-  "/Users/juliakreiner/simulation_outputs", 
+  "breakpoint_continuous_additive_n200_outputs", 
   "m2_allsamples_nomulti_iter", 
   "Additive (n=200)",
   max_iter = 100
@@ -258,7 +261,7 @@ additive_sample_counts <- extract_sample_counts(
 cat("Extracting sample counts for additive (n=70) simulations...\n")
 additive_n70_sample_counts <- extract_sample_counts(
   summary_additive_n70, 
-  "/Users/juliakreiner/simulation_outputs", 
+  "breakpoint_continuous_additive_n70_outputs", 
   "m2_allsamples_n70_nomulti_iter", 
   "Additive (n=70)",
   max_iter = 100
@@ -268,7 +271,7 @@ if (nrow(summary_recessive) > 0) {
   cat("Extracting sample counts for recessive (n=200) simulations...\n")
   recessive_sample_counts <- extract_sample_counts(
     summary_recessive, 
-    "/Users/juliakreiner/simulation_outputs_recessive", 
+    "breakpoint_continuous_recessive_n200_outputs", 
     "m2_allsamples_nomulti_recessive_iter", 
     "Recessive (n=200)",
     max_iter = 100
@@ -355,7 +358,7 @@ process_iterations <- function(summary_data, output_dir, file_prefix, sim_type, 
     genos <- read.table(paste0(output_dir, "/iteration_", iter, "/", file_prefix, iter, ".012"))
     inds <- read.table(paste0(output_dir, "/iteration_", iter, "/", file_prefix, iter, ".012.indv"))
     
-    # Extract year information
+    # Extract year information - updated for new VCF naming pattern
     year <- gsub("i","",gsub("t","",(gsub("_sample_i0","",inds$V1))))
     year2 <- as.numeric(unlist(lapply(strsplit(year,"_"), `[[`, 1)))
     
@@ -418,7 +421,7 @@ process_iterations <- function(summary_data, output_dir, file_prefix, sim_type, 
 cat("Processing additive (n=200) simulations for trajectory plot...\n")
 additive_results <- process_iterations(
   summary_additive, 
-  "/Users/juliakreiner/simulation_outputs", 
+  "/Users/juliakreiner/breakpoint_continuous_additive_n200_outputs", 
   "m2_allsamples_nomulti_iter", 
   "Additive (n=200)",
   max_iter = 100
@@ -427,7 +430,7 @@ additive_results <- process_iterations(
 cat("Processing additive (n=70) simulations for trajectory plot...\n")
 additive_n70_results <- process_iterations(
   summary_additive_n70, 
-  "/Users/juliakreiner/simulation_outputs", 
+  "/Users/juliakreiner/breakpoint_continuous_additive_n70_outputs", 
   "m2_allsamples_n70_nomulti_iter", 
   "Additive (n=70)",
   max_iter = 100
@@ -437,7 +440,7 @@ if (nrow(summary_recessive) > 0) {
   cat("Processing recessive (n=200) simulations for trajectory plot...\n")
   recessive_results <- process_iterations(
     summary_recessive, 
-    "/Users/juliakreiner/simulation_outputs_recessive", 
+    "/Users/juliakreiner/breakpoint_continuous_recessive_n200_outputs", 
     "m2_allsamples_nomulti_recessive_iter", 
     "Recessive (n=200)",
     max_iter = 100
@@ -598,17 +601,12 @@ if (nrow(summary_recessive) > 0) {
 }
 
 # Save detailed trajectory plot
-ggsave("/Users/juliakreiner/detailed_trajectory_plot_first50.png", p1, width = 16, height = 12, dpi = 300)
+ggsave("/Users/juliakreiner/detailed_trajectory_plot_first50.png", p1_ybp, width = 16, height = 12, dpi = 300)
 
 # Display both plots
 print(combined_summary_analysis)
-print(p1)
-# Save detailed trajectory plot
-ggsave("/Users/juliakreiner/detailed_trajectory_plot_first50.png", p1, width = 16, height = 12, dpi = 300)
+print(p1_ybp)
 
-# Display both plots
-print(combined_summary_analysis)
-print(p1)
 cat("\nSelection Coefficient Bias Summary:\n")
 s_bias_summary <- s_diff_data %>%
   group_by(simulation_type, period) %>%
@@ -632,4 +630,3 @@ if(nrow(bp_data) > 0) {
 }
 
 ###################################
-

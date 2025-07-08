@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Streamlined VCF Analysis Script - Updated for new file patterns
+# Streamlined VCF Analysis Script - Updated for new directory structure
 # Produces only trajectory plots and bias plots
 
 library(vcfR)
@@ -163,50 +163,80 @@ summarize_selection <- function(selection_data) {
   return(summary_stats)
 }
 
-# Updated main analysis function
-run_analysis <- function(base_dir = "instants_simulation_outputs", max_iterations = NULL) {
-  iteration_dirs <- list.dirs(base_dir, recursive = FALSE)
-  if (!is.null(max_iterations)) {
-    iteration_dirs <- iteration_dirs[1:min(max_iterations, length(iteration_dirs))]
+# Updated main analysis function - now takes base directory as parameter
+run_analysis <- function(base_dirs = NULL, max_iterations = NULL) {
+  
+  # If no base directories provided, try to find them automatically
+  if (is.null(base_dirs)) {
+    # Look for directories with "instants" in the name
+    possible_dirs <- list.dirs(".", recursive = FALSE)
+    base_dirs <- possible_dirs[grepl("instants", basename(possible_dirs))]
+    
+    if (length(base_dirs) == 0) {
+      # Fallback to old naming
+      base_dirs <- "instants_simulation_outputs"
+    }
+    
+    cat("Auto-detected base directories:", paste(base_dirs, collapse = ", "), "\n")
   }
   
-  cat("Processing", length(iteration_dirs), "iterations for all three simulation types\n")
+  # Process all base directories
+  all_freq_data <- data.frame()
   
-  # Process all three types with progress reporting
-  cat("Processing additive (n=15) files...\n")
-  additive_n15_data <- map_dfr(iteration_dirs, function(dir) {
-    iter_num <- basename(dir)
-    cat("  Iteration", iter_num, "(additive n=15)\n")
-    # Debug: show what m2_ files exist
-    all_m2_files <- list.files(dir, pattern = "^m2_.*\\.vcf$", full.names = FALSE)
-    if (length(all_m2_files) > 0) {
-      cat("    All m2_ files:", paste(head(all_m2_files, 3), collapse = ", "), 
-          ifelse(length(all_m2_files) > 3, "...", ""), "\n")
+  for (base_dir in base_dirs) {
+    if (!dir.exists(base_dir)) {
+      cat("Warning: Directory", base_dir, "does not exist. Skipping.\n")
+      next
     }
-    process_iteration(dir, "additive_n15")
-  })
+    
+    cat("Processing directory:", base_dir, "\n")
+    
+    iteration_dirs <- list.dirs(base_dir, recursive = FALSE)
+    if (!is.null(max_iterations)) {
+      iteration_dirs <- iteration_dirs[1:min(max_iterations, length(iteration_dirs))]
+    }
+    
+    cat("Processing", length(iteration_dirs), "iterations for all three simulation types\n")
+    
+    # Process all three types with progress reporting
+    cat("Processing additive (n=15) files...\n")
+    additive_n15_data <- map_dfr(iteration_dirs, function(dir) {
+      iter_num <- basename(dir)
+      cat("  Iteration", iter_num, "(additive n=15)\n")
+      # Debug: show what m2_ files exist
+      all_m2_files <- list.files(dir, pattern = "^m2_.*\\.vcf$", full.names = FALSE)
+      if (length(all_m2_files) > 0) {
+        cat("    All m2_ files:", paste(head(all_m2_files, 3), collapse = ", "), 
+            ifelse(length(all_m2_files) > 3, "...", ""), "\n")
+      }
+      process_iteration(dir, "additive_n15")
+    })
+    
+    cat("Processing additive (n=40) files...\n")
+    additive_n40_data <- map_dfr(iteration_dirs, function(dir) {
+      iter_num <- basename(dir)
+      cat("  Iteration", iter_num, "(additive n=40)\n")
+      process_iteration(dir, "additive_n40")
+    })
+    
+    cat("Processing recessive (n=40) files...\n")
+    recessive_n40_data <- map_dfr(iteration_dirs, function(dir) {
+      iter_num <- basename(dir)
+      cat("  Iteration", iter_num, "(recessive n=40)\n")
+      process_iteration(dir, "recessive_n40")
+    })
+    
+    # Combine data from this base directory
+    dir_data <- rbind(additive_n15_data, additive_n40_data, recessive_n40_data)
+    all_freq_data <- rbind(all_freq_data, dir_data)
+    
+    cat("Data summary for", base_dir, ":\n")
+    cat("- Additive (n=15):", nrow(additive_n15_data), "rows\n")
+    cat("- Additive (n=40):", nrow(additive_n40_data), "rows\n") 
+    cat("- Recessive (n=40):", nrow(recessive_n40_data), "rows\n")
+  }
   
-  cat("Processing additive (n=40) files...\n")
-  additive_n40_data <- map_dfr(iteration_dirs, function(dir) {
-    iter_num <- basename(dir)
-    cat("  Iteration", iter_num, "(additive n=40)\n")
-    process_iteration(dir, "additive_n40")
-  })
-  
-  cat("Processing recessive (n=40) files...\n")
-  recessive_n40_data <- map_dfr(iteration_dirs, function(dir) {
-    iter_num <- basename(dir)
-    cat("  Iteration", iter_num, "(recessive n=40)\n")
-    process_iteration(dir, "recessive_n40")
-  })
-  
-  cat("Combining all data...\n")
-  all_freq_data <- rbind(additive_n15_data, additive_n40_data, recessive_n40_data)
-  
-  cat("Data summary:\n")
-  cat("- Additive (n=15):", nrow(additive_n15_data), "rows\n")
-  cat("- Additive (n=40):", nrow(additive_n40_data), "rows\n") 
-  cat("- Recessive (n=40):", nrow(recessive_n40_data), "rows\n")
+  cat("Combined data summary:\n")
   cat("- Total:", nrow(all_freq_data), "rows\n")
   
   cat("Calculating selection coefficients...\n")
@@ -425,19 +455,30 @@ create_trajectory_plot <- function(results, max_iterations = 50) {
     )
 }
 
-# USAGE
+# USAGE - Updated to be more flexible
 cat("=== UPDATED STREAMLINED VCF ANALYSIS SCRIPT ===\n")
-cat("Updated for new file patterns:\n")
+cat("Updated for new directory structure.\n")
+cat("Will auto-detect directories with 'instants' in the name.\n")
+cat("File patterns:\n")
 cat("- *_sample_n15_h5.vcf (Additive n=15, teal)\n")
 cat("- *_sample_n40_h5.vcf (Additive n=40, purple)\n")
 cat("- *_sample_n40_h015.vcf (Recessive n=40, yellow)\n\n")
 
-cat("Running analysis...\n")
+# You can specify directories manually or let it auto-detect
+# Example manual specification:
+# base_directories <- c("breakpoint_instants_additiven15_outputs", 
+#                       "breakpoint_instants_additiven40_outputs", 
+#                       "breakpoint_instants_recessiven40_outputs")
+# results <- run_analysis(base_dirs = base_directories, max_iterations = 100)
+
+cat("Running analysis with auto-detection...\n")
 results <- run_analysis(max_iterations = 100)
 
 cat("Creating bias plot...\n")
 bias_plot <- create_bias_plot(results)
-print(bias_plot)
+if (!is.null(bias_plot)) {
+  print(bias_plot)
+}
 
 cat("Creating trajectory plot...\n")
 trajectory_plot <- create_trajectory_plot(results)
@@ -449,61 +490,63 @@ cat("- Additive (n=15): Teal\n")
 cat("- Additive (n=40): Deep purple\n")
 cat("- Recessive (n=40): Yellow\n")
 
-
-
 # Calculate sample counts per timepoint across iterations
-sample_counts_summary <- results$raw_frequencies %>%
-  filter(timepoint != "last") %>%  # Exclude the final timepoint for now
-  # Only keep additive types (exclude recessive)
-  filter(dominance_type %in% c("additive_n15", "additive_n40")) %>%
-  group_by(simulation_type = case_when(
-    dominance_type == "additive_n15" ~ "Additive (n=15)",
-    dominance_type == "additive_n40" ~ "Additive (n=40)",
-    TRUE ~ "Unknown"
-  ), timepoint) %>%
-  summarise(
-    mean_sample_size = mean(sample_size, na.rm = TRUE),
-    n_iterations = length(unique(iteration)),
-    .groups = 'drop'
-  ) %>%
-  # Map timepoints to years before present (same as trajectory plot)
-  mutate(
-    years_before_present = case_when(
-      timepoint == "shift1_before" ~ 143,
-      timepoint == "shift1_after" ~ 139,
-      timepoint == "shift2_before" ~ 93,
-      timepoint == "shift2_after" ~ 89,
-      timepoint == "shift3_before" ~ 43,
-      timepoint == "shift3_after" ~ 39
+if (nrow(results$raw_frequencies) > 0) {
+  sample_counts_summary <- results$raw_frequencies %>%
+    filter(timepoint != "last") %>%  # Exclude the final timepoint for now
+    # Only keep additive types (exclude recessive)
+    filter(dominance_type %in% c("additive_n15", "additive_n40")) %>%
+    group_by(simulation_type = case_when(
+      dominance_type == "additive_n15" ~ "Additive (n=15)",
+      dominance_type == "additive_n40" ~ "Additive (n=40)",
+      TRUE ~ "Unknown"
+    ), timepoint) %>%
+    summarise(
+      mean_sample_size = mean(sample_size, na.rm = TRUE),
+      n_iterations = length(unique(iteration)),
+      .groups = 'drop'
+    ) %>%
+    # Map timepoints to years before present (same as trajectory plot)
+    mutate(
+      years_before_present = case_when(
+        timepoint == "shift1_before" ~ 143,
+        timepoint == "shift1_after" ~ 139,
+        timepoint == "shift2_before" ~ 93,
+        timepoint == "shift2_after" ~ 89,
+        timepoint == "shift3_before" ~ 43,
+        timepoint == "shift3_after" ~ 39
+      )
     )
-  )
-
-# Create the sample distribution plot
-library(ggpattern)
-
-p_sample_counts <- ggplot(sample_counts_summary, 
-                          aes(x = years_before_present, y = mean_sample_size, 
-                              fill = simulation_type, pattern = simulation_type,
-                              pattern_fill = simulation_type)) +
-  geom_col_pattern(position = "stack", alpha = 0.8, width = 1.5,
-                   pattern_density = 0.6, pattern_spacing = 0.1,
-                   colour = NA, pattern_colour = NA) +  # Add pattern_colour = NA
-  scale_fill_manual(name = "Sample Type", 
-                    values = c("Additive (n=15)" = "#21908CFF", "Additive (n=40)" = "#440154FF")) +
-  scale_pattern_fill_manual(name = "Sample Type",
-                            values = c("Additive (n=15)" = "#21908CFF", "Additive (n=40)" = "#FDC100FF")) +
-  scale_pattern_manual(name = "Sample Type", 
-                       values = c("Additive (n=15)" = "none", "Additive (n=40)" = "stripe"), 
-                       guide = "none") +
-  scale_x_reverse(limits = c(145, 0)) +
-  labs(
-    title = "Sample Distribution Across Time",
-    x = "Years Before Present",
-    y = "Mean Sample Size"
-  ) +
-  theme_minimal() +
-  theme(
-    legend.position = "bottom"
-  )
-
-p_sample_counts
+  
+  # Create the sample distribution plot
+  if (require(ggpattern, quietly = TRUE)) {
+    p_sample_counts <- ggplot(sample_counts_summary, 
+                              aes(x = years_before_present, y = mean_sample_size, 
+                                  fill = simulation_type, pattern = simulation_type,
+                                  pattern_fill = simulation_type)) +
+      geom_col_pattern(position = "stack", alpha = 0.8, width = 1.5,
+                       pattern_density = 0.6, pattern_spacing = 0.1,
+                       colour = NA, pattern_colour = NA) +
+      scale_fill_manual(name = "Sample Type", 
+                        values = c("Additive (n=15)" = "#21908CFF", "Additive (n=40)" = "#440154FF")) +
+      scale_pattern_fill_manual(name = "Sample Type",
+                                values = c("Additive (n=15)" = "#21908CFF", "Additive (n=40)" = "#FDC100FF")) +
+      scale_pattern_manual(name = "Sample Type", 
+                           values = c("Additive (n=15)" = "none", "Additive (n=40)" = "stripe"), 
+                           guide = "none") +
+      scale_x_reverse(limits = c(145, 0)) +
+      labs(
+        title = "Sample Distribution Across Time",
+        x = "Years Before Present",
+        y = "Mean Sample Size"
+      ) +
+      theme_minimal() +
+      theme(
+        legend.position = "bottom"
+      )
+    
+    print(p_sample_counts)
+  } else {
+    cat("ggpattern package not available, skipping sample distribution plot\n")
+  }
+}
