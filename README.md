@@ -4,20 +4,19 @@ Population genetics simulations using SLiM to evaluate breakpoint detection meth
 
 ## Overview
 
-This project implements and evaluates methods for detecting breakpoints in selection pressure using temporal sampling of genomic data. The analysis includes two distinct pipelines:
+This project implements and evaluates methods for detecting breakpoints in selection pressure using temporal sampling of genomic data. Despite varying sample size, scheme, and dominance, all simulations take the same form -- after a burn in of 2000 generations where all mutations are evolving neturally, the population experiences a shifts in selection at t=2000 to s=0.05, at t=2050 to s=-0.025, and at t=2010 to s=0.10. The downstream analysis includes two distinct pipelines:
 
 1. **Instantaneous Selection Pipeline**: Evaluates instanteous selection coefficient changes at discrete time points
 2. **Continuous Selection Pipeline**: Analyzes selection dynamics over continuous time series with logistic regression
 
-### SLIM setup & Downstream Analyses
-- **Multiple Sampling Strategies**: Varying sample sizes (n=15 x 6 timepoints or n=40 x 6 timepoints for instantaneous; n=70 or n=200 for continuous sampling)
+### SLIM parameter space
+- **Multiple Sampling Strategies**: Varying sample sizes (n=15 x 6 timepoints or n=40 x 6 timepoints for instantaneous; n=70 or n=200 for continuous sampling through time, in a fashion similar to herbarium/museum collection availability)
 - **Genetic Architectures**: Additive (h=0.5) and recessive (h=0.15) dominance models
-- **Downstream Analysis**: Inference of allele frequency trajectories, along with selection coefficients and breakpoints detection power, accuracy, and bias.
 
 ## Pipeline Structure
 
 ### 1. Instantaneous Selection Pipeline
-Analyzes selection coefficient changes at specific breakpoints with discrete sampling.
+Analyzes selection coefficient changes at specific breakpoints with discrete sampling, and estimates selection coefficients around known shifts in selection.
 
 **Simulation Types:**
 - `breakpoint_instants_additiven15.slim` - Additive model, n=15 samples
@@ -40,7 +39,8 @@ breakpoint_instants_[type]_outputs/
 ```
 
 ### 2. Continuous Selection Pipeline
-Analyzes selection dynamics through continuous temporal sampling.
+Analyzes selection dynamics through continuous temporal sampling, along with power to infer shifts (breakpoints) in selection, and the accuracy, and bias of selection coefficients and timing of selective shifts.
+
 
 **Simulation Types:**
 - `breakpoint_continuous_additive_n200.slim` - Additive model, n=200 population
