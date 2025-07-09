@@ -4,7 +4,7 @@ Population genetics simulations using SLiM to evaluate breakpoint detection meth
 
 ## Overview
 
-This project implements and evaluates methods for detecting breakpoints in selection pressure using temporal sampling of genomic data. Despite varying sample size, scheme, and dominance, all simulations take the same form - after a burn in of 2000 generations where all mutations are evolving neturally, the population experiences a shifts in selection at t=2000 to s=0.05, at t=2050 to s=-0.025, and at t=2100 to s=0.10 and continues to evolve until t=2141. The downstream analysis includes two distinct pipelines:
+This project implements and evaluates methods for detecting breakpoints in selection pressure using temporal sampling of genomic data. Despite varying sample size, scheme, and dominance, all simulations take the same form - after a burn in of 2000 generations where all mutations are evolving neturally, the population experiences shifts in selection at t=2000 to s=0.05, at t=2050 to s=-0.025, and at t=2100 to s=0.10 and continues to evolve until t=2141. The downstream analysis includes two distinct pipelines:
 
 1. **Instantaneous Selection Pipeline**: Evaluates instanteous selection coefficient changes at discrete time points
 2. **Continuous Selection Pipeline**: Analyzes selection dynamics over continuous time series with logistic regression
